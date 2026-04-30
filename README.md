@@ -1,5 +1,5 @@
 ### 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/ticketing-system-backend.git
+git clone (https://github.com/vilvince/complaint-and-ticketing-system)
 cd ticketing-system-backend
 
 ### 2. Install dependencies
