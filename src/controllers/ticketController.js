@@ -73,10 +73,12 @@ const trackTicket = async (req, res) => {
     const { data, error } = await supabase
       .from('tickets')
       .select(`
+        id,
         ticket_code,
         subject,
         status,
         priority,
+        assigned_to,
         resolution_notes,
         created_at,
         updated_at,
@@ -92,9 +94,26 @@ const trackTicket = async (req, res) => {
       });
     }
 
+    // ─── Fetch activity logs for this ticket ───
+    const { data: logs } = await supabase
+      .from('ticket_logs')
+      .select('action, remarks, performed_by, created_at')
+      .eq('ticket_id', data.id)
+      .order('created_at', { ascending: true });
+
+    const history = (logs || []).map(log => ({
+      action: log.action,
+      details: log.remarks || null,
+      performedBy: log.performed_by || 'system',
+      date: log.created_at,
+    }));
+
+    // Return ticket without exposing internal id
+    const { id: _id, ...ticketPublic } = data;
+
     return res.status(200).json({
       success: true,
-      ticket: data
+      ticket: { ...ticketPublic, history }
     });
 
   } catch (err) {
@@ -106,29 +125,78 @@ const trackTicket = async (req, res) => {
   }
 };
 
-// ─── Get All Tickets (Staff/Admin) ───
+
+// ─── Get Tickets (filtered by assigned_to for staff, all for admin) ───
 const getAllTickets = async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { role, full_name } = req.staff || {};
+    const userRole = (role || '').toLowerCase();
+
+    console.log(`Fetching tickets for: ${full_name} (${role})`);
+
+    let query = supabase
       .from('tickets')
       .select(`
         id,
         ticket_code,
         subject,
+        description,
         status,
         priority,
+        assigned_to,
+        submitter_email,
+        resolution_notes,
         is_anonymous,
         created_at,
+        updated_at,
         categories ( name )
       `)
       .order('created_at', { ascending: false });
 
+    // Staff only see their own assigned tickets
+    if (userRole === 'staff' && full_name) {
+      console.log(`Applying filter: assigned_to = ${full_name}`);
+      query = query.eq('assigned_to', full_name);
+    }
+
+    const { data: tickets, error } = await query;
     if (error) throw error;
+    if (!tickets) return res.status(200).json({ success: true, total: 0, tickets: [] });
+
+    // ─── Fetch logs for each ticket ───
+    const ticketIds = tickets.map(t => t.id);
+    let logsMap = {};
+
+    if (ticketIds.length > 0) {
+      const { data: logs, error: logsError } = await supabase
+        .from('ticket_logs')
+        .select('*')
+        .in('ticket_id', ticketIds)
+        .order('created_at', { ascending: true });
+
+      if (!logsError && logs) {
+        logs.forEach(log => {
+          if (!logsMap[log.ticket_id]) logsMap[log.ticket_id] = [];
+          logsMap[log.ticket_id].push(log);
+        });
+      }
+    }
+
+    // ─── Attach logs as history to each ticket ───
+    const enriched = tickets.map(t => ({
+      ...t,
+      history: (logsMap[t.id] || []).map(log => ({
+        action: log.action,
+        details: log.remarks || null,
+        date: log.created_at,
+        performedBy: log.performed_by || 'system'
+      }))
+    }));
 
     return res.status(200).json({
       success: true,
-      total: data.length,
-      tickets: data
+      total: enriched.length,
+      tickets: enriched
     });
 
   } catch (err) {
@@ -137,6 +205,51 @@ const getAllTickets = async (req, res) => {
       success: false,
       message: 'Server error. Please try again.'
     });
+  }
+};
+
+// ─── Get Logs for tickets assigned to this staff (History Log tab) ───
+const getMyLogs = async (req, res) => {
+  try {
+    const { full_name } = req.staff || {};
+
+    // Get ticket IDs assigned to this staff member
+    const { data: myTickets, error: tErr } = await supabase
+      .from('tickets')
+      .select('id')
+      .eq('assigned_to', full_name);
+
+    if (tErr) throw tErr;
+
+    if (!myTickets || myTickets.length === 0) {
+      return res.status(200).json({ success: true, logs: [] });
+    }
+
+    const ticketIds = myTickets.map(t => t.id);
+
+    const { data: logs, error: lErr } = await supabase
+      .from('ticket_logs')
+      .select('id, ticket_id, action, remarks, performed_by, created_at, tickets ( ticket_code, subject )')
+      .in('ticket_id', ticketIds)
+      .order('created_at', { ascending: false });
+
+    if (lErr) throw lErr;
+
+    const mapped = (logs || []).map(log => ({
+      id: log.id,
+      action: log.action,
+      details: log.remarks || '',
+      ticketCode: log.tickets?.ticket_code || '',
+      subject: log.tickets?.subject || '',
+      date: log.created_at,
+      performedBy: log.performed_by || 'system',
+    }));
+
+    return res.status(200).json({ success: true, logs: mapped });
+
+  } catch (err) {
+    console.error('getMyLogs error:', err.message);
+    return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
   }
 };
 
@@ -339,5 +452,6 @@ module.exports = {
   updateTicketStatus,
   assignTicket,
   resolveTicket,
-  getTicketLogs
+  getTicketLogs,
+  getMyLogs
 };

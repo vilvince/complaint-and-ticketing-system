@@ -79,13 +79,22 @@ const loginStaff = async (req, res) => {
       .from('staff')
       .select('*')
       .eq('email', email)
-      .eq('is_active', true)
       .single();
 
     if (error || !staff) {
+      console.log(`Login attempt failed: User not found (${email})`);
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password.'
+      });
+    }
+
+    // ─── Check if active (treat NULL as true for legacy/manual users) ───
+    if (staff.is_active === false) {
+      console.log(`Login attempt failed: Account deactivated (${email})`);
+      return res.status(401).json({
+        success: false,
+        message: 'Your account has been deactivated. Please contact the administrator.'
       });
     }
 
@@ -103,6 +112,7 @@ const loginStaff = async (req, res) => {
     const token = jwt.sign(
       {
         id: staff.id,
+        full_name: staff.full_name,
         email: staff.email,
         role: staff.role
       },

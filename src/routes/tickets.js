@@ -7,7 +7,8 @@ const {
   updateTicketStatus,
   assignTicket,
   resolveTicket,
-  getTicketLogs
+  getTicketLogs,
+  getMyLogs
 } = require('../controllers/ticketController');
 const {
   verifyToken,
@@ -20,6 +21,7 @@ router.get('/track/:ticket_code', trackTicket);
 
 // ─── Staff Routes (need token) ───
 router.get('/all', verifyToken, getAllTickets);
+router.get('/my-logs', verifyToken, getMyLogs);
 router.patch('/:ticket_id/status', verifyToken, updateTicketStatus);
 router.patch('/:ticket_id/resolve', verifyToken, resolveTicket);
 router.get('/:ticket_id/logs', verifyToken, getTicketLogs);
